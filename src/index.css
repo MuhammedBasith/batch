@@ -100,7 +100,7 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Cormorant Garamond', serif;
   }
 }
 
@@ -131,4 +131,22 @@ html {
 /* Custom focus styles */
 .focus-visible {
   @apply outline-none ring-2 ring-white/50 ring-offset-2 ring-offset-transparent;
+}
+
+/* Confetti animation */
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(-100vh) rotate(0deg);
+  }
+  100% {
+    transform: translateY(100vh) rotate(360deg);
+  }
+}
+
+.confetti {
+  position: fixed;
+  top: -10px;
+  z-index: 1000;
+  pointer-events: none;
+  animation: confetti-fall 3s linear forwards;
 }
