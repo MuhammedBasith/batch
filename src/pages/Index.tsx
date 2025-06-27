@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Download, Users, Shuffle, Sparkles, X } from "lucide-react";
+import { Download, Users, Shuffle, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 
 interface Group {
   id: number;
@@ -27,6 +27,7 @@ const Index = () => {
   const [groupPrefix, setGroupPrefix] = useState<string>('Team');
   const [showResultsModal, setShowResultsModal] = useState<boolean>(false);
   const [excludedParticipants, setExcludedParticipants] = useState<Set<string>>(new Set());
+  const [distributeExtraRandomly, setDistributeExtraRandomly] = useState<boolean>(false);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -39,6 +40,7 @@ const Index = () => {
       setUseCustomNames(settings.useCustomNames || false);
       setCustomNames(settings.customNames || '');
       setGroupPrefix(settings.groupPrefix || 'Team');
+      setDistributeExtraRandomly(settings.distributeExtraRandomly || false);
     }
   }, []);
 
@@ -65,7 +67,8 @@ const Index = () => {
       suspenseMode,
       useCustomNames,
       customNames,
-      groupPrefix
+      groupPrefix,
+      distributeExtraRandomly
     };
     localStorage.setItem('batch-settings', JSON.stringify(settings));
   };
@@ -136,21 +139,37 @@ const Index = () => {
     const newGroups: Group[] = [];
     let groupId = 1;
     
-    const totalGroups = Math.ceil(shuffled.length / teamSize);
-    const groupSizes = Array(totalGroups).fill(Math.floor(shuffled.length / totalGroups));
-    const remainder = shuffled.length % totalGroups;
-    
-    // Distribute remainder
-    for (let i = 0; i < remainder; i++) {
-      groupSizes[i]++;
+    if (distributeExtraRandomly) {
+      // Simple division - extras go to random groups
+      const totalGroups = Math.ceil(shuffled.length / teamSize);
+      
+      for (let i = 0; i < totalGroups; i++) {
+        newGroups.push({ id: groupId++, members: [] });
+      }
+      
+      // Distribute participants randomly
+      shuffled.forEach((participant, index) => {
+        const groupIndex = index % totalGroups;
+        newGroups[groupIndex].members.push(participant);
+      });
+    } else {
+      // Balanced distribution
+      const totalGroups = Math.ceil(shuffled.length / teamSize);
+      const groupSizes = Array(totalGroups).fill(Math.floor(shuffled.length / totalGroups));
+      const remainder = shuffled.length % totalGroups;
+      
+      // Distribute remainder
+      for (let i = 0; i < remainder; i++) {
+        groupSizes[i]++;
+      }
+      
+      let participantIndex = 0;
+      groupSizes.forEach(size => {
+        const members = shuffled.slice(participantIndex, participantIndex + size);
+        newGroups.push({ id: groupId++, members });
+        participantIndex += size;
+      });
     }
-    
-    let participantIndex = 0;
-    groupSizes.forEach(size => {
-      const members = shuffled.slice(participantIndex, participantIndex + size);
-      newGroups.push({ id: groupId++, members });
-      participantIndex += size;
-    });
 
     setGroups(newGroups);
     setRevealedGroups(0);
@@ -184,6 +203,53 @@ const Index = () => {
     });
   };
 
+  const onDragEnd = (result: any) => {
+    if (!result.destination) return;
+
+    const { source, destination } = result;
+    
+    if (source.droppableId === destination.droppableId) {
+      // Reordering within the same group
+      const groupId = parseInt(source.droppableId);
+      const group = groups.find(g => g.id === groupId);
+      if (!group) return;
+
+      const newMembers = Array.from(group.members);
+      const [reorderedItem] = newMembers.splice(source.index, 1);
+      newMembers.splice(destination.index, 0, reorderedItem);
+
+      setGroups(groups.map(g => 
+        g.id === groupId ? { ...g, members: newMembers } : g
+      ));
+    } else {
+      // Moving between groups
+      const sourceGroupId = parseInt(source.droppableId);
+      const destGroupId = parseInt(destination.droppableId);
+      
+      const sourceGroup = groups.find(g => g.id === sourceGroupId);
+      const destGroup = groups.find(g => g.id === destGroupId);
+      
+      if (!sourceGroup || !destGroup) return;
+
+      const sourceMember = sourceGroup.members[source.index];
+      
+      const newSourceMembers = [...sourceGroup.members];
+      newSourceMembers.splice(source.index, 1);
+      
+      const newDestMembers = [...destGroup.members];
+      newDestMembers.splice(destination.index, 0, sourceMember);
+
+      setGroups(groups.map(g => {
+        if (g.id === sourceGroupId) {
+          return { ...g, members: newSourceMembers };
+        } else if (g.id === destGroupId) {
+          return { ...g, members: newDestMembers };
+        }
+        return g;
+      }));
+    }
+  };
+
   const reshuffleGroups = () => {
     if (groups.length === 0) return;
     generateGroups();
@@ -212,12 +278,14 @@ const Index = () => {
 
   const effectiveParticipantCount = getParticipantsList().length;
   const estimatedGroups = Math.ceil(effectiveParticipantCount / teamSize);
+  const baseGroupSize = Math.floor(effectiveParticipantCount / estimatedGroups);
+  const extraParticipants = effectiveParticipantCount % estimatedGroups;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
       <div className="w-full max-w-lg">
         {/* Main Configuration Card */}
-        <Card className="bg-white shadow-xl border-0">
+        <Card className="bg-white shadow-lg border border-gray-200">
           <CardHeader className="text-center pb-6">
             <div className="flex items-center justify-center gap-3 mb-4">
               <div className="p-3 bg-blue-500 rounded-xl">
@@ -296,6 +364,19 @@ const Index = () => {
               />
             </div>
 
+            {/* Distribute Extra Randomly */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label htmlFor="distribute-extra" className="text-gray-700 font-medium">Distribute extras randomly</Label>
+                <p className="text-sm text-gray-500">Put leftover participants in random groups</p>
+              </div>
+              <Switch
+                id="distribute-extra"
+                checked={distributeExtraRandomly}
+                onCheckedChange={setDistributeExtraRandomly}
+              />
+            </div>
+
             {/* Suspense Mode */}
             <div className="flex items-center justify-between">
               <div className="space-y-1">
@@ -317,13 +398,18 @@ const Index = () => {
               <p className="text-gray-700">
                 <span className="font-medium">Active participants:</span> {effectiveParticipantCount}
               </p>
+              {extraParticipants > 0 && (
+                <p className="text-gray-700">
+                  <span className="font-medium">Group distribution:</span> {estimatedGroups - extraParticipants} groups of {baseGroupSize}, {extraParticipants} groups of {baseGroupSize + 1}
+                </p>
+              )}
             </div>
 
             {/* Generate Button */}
             <Button 
               onClick={generateGroups}
               disabled={isGenerating}
-              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 text-lg transition-all duration-300 hover:scale-105"
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 text-lg transition-colors duration-200 hover:shadow-lg"
               size="lg"
             >
               {isGenerating ? (
@@ -332,10 +418,7 @@ const Index = () => {
                   Generating...
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5" />
-                  Generate Groups
-                </div>
+                "Generate Groups"
               )}
             </Button>
           </CardContent>
@@ -373,44 +456,69 @@ const Index = () => {
               </Button>
             </div>
 
-            {/* Groups Grid */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {groups.map((group, index) => (
-                <Card
-                  key={group.id}
-                  className={`transition-all duration-500 ${
-                    index < revealedGroups 
-                      ? 'opacity-100 translate-y-0' 
-                      : 'opacity-0 translate-y-4'
-                  }`}
-                  style={{ 
-                    transitionDelay: suspenseMode ? `${index * 100}ms` : '0ms' 
-                  }}
-                >
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-bold">
-                        {group.id}
-                      </div>
-                      {groupPrefix} {group.id}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {group.members.map((member, memberIndex) => (
-                        <div
-                          key={memberIndex}
-                          className="flex items-center gap-3 p-2 bg-gray-50 rounded-lg"
-                        >
-                          <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                          <span className="text-gray-700">{member}</span>
+            <p className="text-sm text-center text-gray-600">
+              Drag and drop members between teams to reorganize
+            </p>
+
+            {/* Groups Grid with Drag and Drop */}
+            <DragDropContext onDragEnd={onDragEnd}>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {groups.map((group, index) => (
+                  <Card
+                    key={group.id}
+                    className={`transition-all duration-500 ${
+                      index < revealedGroups 
+                        ? 'opacity-100 translate-y-0' 
+                        : 'opacity-0 translate-y-4'
+                    }`}
+                    style={{ 
+                      transitionDelay: suspenseMode ? `${index * 100}ms` : '0ms' 
+                    }}
+                  >
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg">
+                        <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-bold">
+                          {group.id}
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                        {groupPrefix} {group.id}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Droppable droppableId={group.id.toString()}>
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.droppableProps}
+                            className={`space-y-2 min-h-[60px] rounded-lg p-2 transition-colors ${
+                              snapshot.isDraggingOver ? 'bg-blue-50 border-2 border-blue-200 border-dashed' : ''
+                            }`}
+                          >
+                            {group.members.map((member, memberIndex) => (
+                              <Draggable key={member} draggableId={member} index={memberIndex}>
+                                {(provided, snapshot) => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    className={`flex items-center gap-3 p-2 bg-gray-50 rounded-lg cursor-move transition-all ${
+                                      snapshot.isDragging ? 'shadow-lg bg-white border-2 border-blue-200' : 'hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                                    <span className="text-gray-700">{member}</span>
+                                  </div>
+                                )}
+                              </Draggable>
+                            ))}
+                            {provided.placeholder}
+                          </div>
+                        )}
+                      </Droppable>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </DragDropContext>
           </div>
         </DialogContent>
       </Dialog>
